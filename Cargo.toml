@@ -1,0 +1,7 @@
+[package]
+name = "shipc"
+version = "0.1.0"
+authors = ["Andrea Lattuada <andrea.lattuada@inf.ethz.ch>"]
+
+[dependencies]
+clap = "^2.25"
