@@ -5,3 +5,4 @@ authors = ["Andrea Lattuada <andrea.lattuada@inf.ethz.ch>"]
 
 [dependencies]
 clap = "^2.25"
+tempdir = "0.3"
