@@ -4,6 +4,8 @@
 
 ## Usage
 
+Requires `umoci` and `runc` to be available in `$PATH`.
+
 To run a oci image (found in `./thisimage` either as a directory structure or a **.tar.gz** bundle),
 
 ```
