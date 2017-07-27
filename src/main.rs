@@ -61,7 +61,7 @@ fn cmd_run(image: &str, rootless: bool, volumes: &[(&str, &str)]) -> Result<Opti
     eprintln!("info: Temporary directory: {:?}", tmp_dir.path());
     eprint!("info: Running image {}", image);
     if rootless {
-        eprint!("info: in rootless mode");
+        eprint!(" in rootless mode");
     }
     eprintln!();
     for &(ref orig, ref dest) in volumes {
