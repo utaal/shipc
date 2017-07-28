@@ -2,6 +2,7 @@
 extern crate tempdir;
 extern crate rand;
 extern crate base32;
+#[macro_use] extern crate serde_json;
 
 use std::fs;
 
@@ -52,11 +53,7 @@ impl ToCmdErr<()> for bool {
     }
 }
 
-fn cmd_run(image: &str, rootless: bool, volumes: &[(&str, &str)]) -> Result<Option<i32>, CmdErr> {
-    if volumes.len() > 0 {
-        return Err(CmdErr { message: "Volume bind-mounts are not supported yet".to_owned(), secondary: None });
-    }
-
+fn cmd_run(test: bool, image: &str, rootless: bool, volumes: &[(&str, &str)]) -> Result<Option<i32>, CmdErr> {
     let tmp_dir = TempDir::new("shipc").check("Cannot create temporary directory")?;
     eprintln!("info: Temporary directory: {:?}", tmp_dir.path());
     eprint!("info: Running image {}", image);
@@ -70,6 +67,8 @@ fn cmd_run(image: &str, rootless: bool, volumes: &[(&str, &str)]) -> Result<Opti
     let image_path = fs::canonicalize(::std::path::Path::new(image)).check("Image path is invalid")?;
     let image_metadata = fs::metadata(image).check("Invalid image path")?;
     let mut image_dir_path = image_path.to_path_buf();
+
+    // ** Prepare image **
 
     // Support for .tar.gz images: un-tar them in the temporary directory
     if image_metadata.file_type().is_file() {
@@ -94,6 +93,8 @@ fn cmd_run(image: &str, rootless: bool, volumes: &[(&str, &str)]) -> Result<Opti
             });
         }
     }
+
+    // ** Unpack image
 
     let bundle = "bundle";
 
@@ -121,11 +122,53 @@ fn cmd_run(image: &str, rootless: bool, volumes: &[(&str, &str)]) -> Result<Opti
         });
     }
 
+    // ** Edit spec (volumes and command) **
+
     let container_name = {
         use rand::Rng;
-        let bytes: [u8; 4] = unsafe { ::std::mem::transmute(rand::thread_rng().gen::<u32>().to_be()) };
-        ::base32::encode(::base32::Alphabet::RFC4648 { padding: false }, &bytes[..])
+        let bytes: [u8; 8] = unsafe { ::std::mem::transmute(rand::thread_rng().gen::<u64>().to_be()) };
+        ::base32::encode(::base32::Alphabet::RFC4648 { padding: false }, &bytes[..]).to_lowercase()
     };
+
+    let config_json_path = bundle_path.join("config.json");
+    let json_str = {
+        use std::io::Read;
+        let mut out = String::with_capacity(1 << 12);
+        let mut file = fs::File::open(&config_json_path).check("Internal error: invalid bundle")?;
+        file.read_to_string(&mut out).check("Internal error: invalid bundle")?;
+        out
+    };
+
+    let spec = {
+        let mut root: ::serde_json::Value = ::serde_json::from_str(&json_str).check("Internal error: invalid bundle spec")?;
+        {
+            let hostname = root.get_mut("hostname").check("Internal error: invalid bundle spec")?;
+            *hostname = json!(container_name);
+        }
+        {
+            let mounts_value = root.get_mut("mounts").check("Internal error: invalid bundle spec")?;
+            let mounts = mounts_value.as_array_mut().check("Internal error: invalid bundle spec")?;
+            for &(ref orig, ref dest) in volumes {
+                let orig_path = fs::canonicalize(orig).check("Invalid volume source")?;
+                mounts.push(json!({
+                    "source": orig_path,
+                    "destination": dest,
+                    "type": "bind",
+                    "options": ["rbind", "rw"],
+                }));
+            }
+        }
+        root
+    };
+
+    {
+        use std::io::Write;
+        let mut file = fs::OpenOptions::new().write(true).truncate(true).open(&config_json_path).check("Internal error")?;
+        let spec_json_str = ::serde_json::ser::to_string_pretty(&spec).check("Internal error: invalid json")?;
+        file.write_all(spec_json_str.as_bytes()).check("Internal error: cannot write spec")?;
+    }
+
+    // ** Spawn container **
 
     let mut runc_command = ::std::process::Command::new("runc");
     runc_command
@@ -143,6 +186,15 @@ fn cmd_run(image: &str, rootless: bool, volumes: &[(&str, &str)]) -> Result<Opti
 
     eprintln!("info: Starting container with name {}", &container_name);
     eprintln!("info: If runc is successful, the next line will be inside the container");
+
+    if test {
+        eprintln!("test: Press enter to continue (temporary dir cleaned up afterwards)");
+        use std::io::BufRead;
+        let stdin = std::io::stdin();
+        stdin.lock().lines().next();
+        eprintln!("test: Test run successful (container not started)");
+        return Ok(Some(0));
+    }
 
     let runc_status = runc_command.status().check("Failed to start the container")?;
 
@@ -166,6 +218,10 @@ fn check(condition: bool, message: &str) {
 fn main() {
     let app = app_from_crate!()
         .about("Unpack and run oci images")
+        .arg(Arg::with_name("test")
+             .long("test")
+             .help("Run in test mode (do not spawn the container)")
+             .hidden(true))
         .subcommand(SubCommand::with_name("run")
                     .about("Run an oci image")
                     .arg(Arg::with_name("image")
@@ -182,6 +238,8 @@ fn main() {
                          .multiple(true)));
     let matches = app.clone().get_matches();
 
+    let test = matches.is_present("test");
+
     let result = match matches.subcommand() {
         ("run", Some(sub_matches)) => {
             let rootless: bool = sub_matches.is_present("rootless");
@@ -195,7 +253,7 @@ fn main() {
                     (orig, dest)
                 }).collect::<Vec<_>>()
             }).unwrap_or(Vec::new());
-            cmd_run(image, rootless, &volumes[..])
+            cmd_run(test, image, rootless, &volumes[..])
         },
         _ => {
             let mut out = ::std::io::stdout();
