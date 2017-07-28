@@ -67,7 +67,7 @@ fn cmd_run(image: &str, rootless: bool, volumes: &[(&str, &str)]) -> Result<Opti
     for &(ref orig, ref dest) in volumes {
         eprintln!("info:   with volume {}:{}", orig, dest);
     }
-    let image_path = ::std::path::Path::new(image);
+    let image_path = fs::canonicalize(::std::path::Path::new(image)).check("Image path is invalid")?;
     let image_metadata = fs::metadata(image).check("Invalid image path")?;
     let mut image_dir_path = image_path.to_path_buf();
 
@@ -98,14 +98,14 @@ fn cmd_run(image: &str, rootless: bool, volumes: &[(&str, &str)]) -> Result<Opti
     let bundle = "bundle";
 
     let bundle_path = tmp_dir.path().join(bundle);
-    eprintln!("info: Unpacking image to {}", bundle_path.to_string_lossy());
+    eprintln!("info: Unpacking image {} to {}", image_dir_path.to_string_lossy(), bundle_path.to_string_lossy());
 
     let mut umoci_command = ::std::process::Command::new("umoci");
     umoci_command
         .current_dir(tmp_dir.path())
         .arg("unpack")
         .arg("--image")
-        .arg(&image_dir_path.file_name().expect("The image directory must have a last component"));
+        .arg(&image_dir_path);
     if rootless {
         umoci_command.arg("--rootless");
     }
