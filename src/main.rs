@@ -53,7 +53,7 @@ impl ToCmdErr<()> for bool {
     }
 }
 
-fn cmd_run(test: bool, image: &str, rootless: bool, volumes: &[(&str, &str)]) -> Result<Option<i32>, CmdErr> {
+fn cmd_run(test: bool, image: &str, rootless: bool, volumes: &[(&str, &str)], command: Option<Vec<&str>>) -> Result<Option<i32>, CmdErr> {
     let tmp_dir = TempDir::new("shipc").check("Cannot create temporary directory")?;
     eprintln!("info: Temporary directory: {:?}", tmp_dir.path());
     eprint!("info: Running image {}", image);
@@ -158,6 +158,11 @@ fn cmd_run(test: bool, image: &str, rootless: bool, volumes: &[(&str, &str)]) ->
                 }));
             }
         }
+        if let Some(command_args) = command {
+            let process = root.get_mut("process").check("Internal error: invalid bundle spec")?;
+            let args = process.get_mut("args").check("Internal error: invalid bundle spec")?;
+            *args = json!(command_args);
+        }
         root
     };
 
@@ -223,9 +228,10 @@ fn main() {
              .help("Run in test mode (do not spawn the container)")
              .hidden(true))
         .subcommand(SubCommand::with_name("run")
-                    .about("Run an oci image")
                     .arg(Arg::with_name("image")
                          .required(true))
+                    .arg(Arg::with_name("command")
+                         .multiple(true))
                     .arg(Arg::with_name("rootless")
                          .help("Run in rootless mode")
                          .long("rootless"))
@@ -234,8 +240,10 @@ fn main() {
                          .long("volume")
                          .short("v")
                          .takes_value(true)
-                         .value_name("VOLUME")
-                         .multiple(true)));
+                         .value_name("volume")
+                         .number_of_values(1)
+                         .multiple(true))
+                    );
     let matches = app.clone().get_matches();
 
     let test = matches.is_present("test");
@@ -253,7 +261,7 @@ fn main() {
                     (orig, dest)
                 }).collect::<Vec<_>>()
             }).unwrap_or(Vec::new());
-            cmd_run(test, image, rootless, &volumes[..])
+            cmd_run(test, image, rootless, &volumes[..], sub_matches.values_of("command").map(|x| x.collect()))
         },
         _ => {
             let mut out = ::std::io::stdout();
